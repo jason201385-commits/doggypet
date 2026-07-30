@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>狗狗桌寵</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;font-family:"Microsoft JhengHei",system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+  html,body{background:transparent;overflow:hidden;height:100%}
+  #app{display:flex;flex-direction:column;height:100%;justify-content:flex-end}
+
+  /* 拖曳把手 */
+  #drag{height:16px;display:flex;justify-content:center;align-items:center;cursor:grab;color:#c96;opacity:.0;transition:opacity .2s;font-size:10px;letter-spacing:2px}
+  #app:hover #drag{opacity:.85}
+
+  /* 聊天面板 */
+  #panel{display:none;flex-direction:column;flex:1;min-height:0;background:#fff7ef;border:2px solid #e8b27d;border-radius:14px;box-shadow:0 6px 22px rgba(0,0,0,.25);margin:0 4px 6px;overflow:hidden}
+  #panel.open{display:flex}
+  #hd{background:linear-gradient(135deg,#f0955a,#e8794a);color:#fff;padding:6px 10px;display:flex;align-items:center;gap:8px}
+  #hdName{font-weight:700;font-size:14px;flex:1}
+  #hd button{background:rgba(255,255,255,.22);border:0;color:#fff;border-radius:8px;width:24px;height:24px;cursor:pointer;font-size:12px;line-height:1}
+  #pick{display:flex;gap:8px;justify-content:center;padding:6px;background:#ffe9d6}
+  #pick img{width:34px;height:34px;border-radius:50%;border:2px solid transparent;cursor:pointer;background:#fff}
+  #pick img.on{border-color:#e8794a}
+  #log{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:6px;-webkit-user-select:text;user-select:text}
+  .msg{max-width:86%;padding:7px 10px;border-radius:12px;font-size:13px;line-height:1.5;word-break:break-word}
+  .bot{background:#fff;border:1px solid #f0cfa8;align-self:flex-start}
+  .me{background:#e8794a;color:#fff;align-self:flex-end}
+  #quick{display:flex;gap:5px;padding:0 8px 6px;flex-wrap:wrap}
+  #quick button{background:#fff;border:1px solid #e8b27d;color:#b05e2e;border-radius:20px;padding:3px 9px;font-size:11px;cursor:pointer}
+  #in{display:flex;gap:6px;padding:0 8px 8px}
+  #in input{flex:1;border:1.5px solid #e8b27d;border-radius:10px;padding:7px 10px;font-size:13px;outline:none;-webkit-user-select:text;user-select:text}
+  #in button{background:#e8794a;color:#fff;border:0;border-radius:10px;padding:0 14px;font-weight:700;cursor:pointer}
+
+  /* 狗本體 */
+  #dogWrap{display:flex;flex-direction:column;align-items:center;gap:2px;padding-bottom:4px}
+  #dog{width:110px;height:110px;border-radius:50%;border:3px solid #fff;box-shadow:0 4px 14px rgba(0,0,0,.3);cursor:pointer;background:#fff;object-fit:cover;animation:bob 3s ease-in-out infinite}
+  #dog.talk{animation:hop .35s ease-in-out infinite}
+  @keyframes bob{0%,100%{transform:translateY(0) rotate(-1.5deg)}50%{transform:translateY(-4px) rotate(1.5deg)}}
+  @keyframes hop{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+  #tag{background:rgba(255,255,255,.92);border:1px solid #e8b27d;color:#b05e2e;font-size:11px;font-weight:700;padding:1px 10px;border-radius:10px}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="drag" data-tauri-drag-region>⠿ ⠿ ⠿</div>
+  <div id="panel">
+    <div id="hd">
+      <span id="hdName">花生</span>
+      <button id="voice" title="語音">🔇</button>
+      <button id="mini" title="收起">─</button>
+      <button id="quit" title="離開">✕</button>
+    </div>
+    <div id="pick"></div>
+    <div id="log"></div>
+    <div id="quick">
+      <button data-q="我卡住了,不知道下一步">我卡住了</button>
+      <button data-q="幫我把想做的事翻成給 Claude 的中文指令">幫我寫指令</button>
+      <button data-q="額度好像快爆了,怎麼辦?">額度快爆了</button>
+    </div>
+    <div id="in"><input id="txt" placeholder="打你卡住的地方…"><button id="send">送出</button></div>
+  </div>
+  <div id="dogWrap">
+    <img id="dog" alt="狗狗助教">
+    <div id="tag">花生</div>
+  </div>
+</div>
+<script>
+(function(){
+  var API='https://claude.easyknowai.com/api/chat';
+  var DOGS=[
+    {name:'花生', img:'dog-huasheng.png', hi:'汪~我是花生!卡在哪一步?直接打給我,或點快速鈕。'},
+    {name:'芝麻', img:'dog-zhima.png',    hi:'汪汪!我是芝麻!Claude 的事交給我就對了,說吧!'},
+    {name:'湯圓', img:'dog-tangyuan.png', hi:'嗨…我是湯圓,我會努力幫你!卡在哪裡呢?'}
+  ];
+  var saved=null; try{saved=localStorage.getItem('ckai_dog');}catch(e){}
+  var DOG=DOGS.filter(function(d){return d.name===saved;})[0]||DOGS[0];
+  var history=[], busy=false, greeted=false, voiceOn=false, open=false;
+
+  var $=function(id){return document.getElementById(id);};
+  var dog=$('dog'), tag=$('tag'), panel=$('panel'), log=$('log'), txt=$('txt'), hdName=$('hdName'), pick=$('pick'), voiceBtn=$('voice');
+
+  // ── Tauri 視窗控制(收合 150x170 / 展開 330x500,錨定左下不飄移)──
+  var TW=null, SMALL={w:150,h:170}, BIG={w:330,h:500};
+  try{ TW=window.__TAURI__.window; }catch(e){}
+  function resizeTo(sz, grow){
+    if(!TW) return Promise.resolve();
+    var win=TW.getCurrentWindow();
+    return win.outerPosition().then(function(pos){
+      return win.scaleFactor().then(function(f){
+        var dx=0, dy=(grow? -(BIG.h-SMALL.h) : (BIG.h-SMALL.h))*f;
+        return win.setSize(new TW.LogicalSize(sz.w,sz.h)).then(function(){
+          return win.setPosition(new TW.PhysicalPosition(Math.round(pos.x+dx), Math.round(pos.y+dy)));
+        });
+      });
+    }).catch(function(){ if(TW) TW.getCurrentWindow().setSize(new TW.LogicalSize(sz.w,sz.h)); });
+  }
+
+  function applyDog(){
+    dog.src=DOG.img; tag.textContent=DOG.name; hdName.textContent=DOG.name;
+    [].forEach.call(pick.querySelectorAll('img'),function(i){i.classList.toggle('on',i.getAttribute('data-dog')===DOG.name);});
+  }
+  pick.innerHTML=DOGS.map(function(d){return '<img src="'+d.img+'" data-dog="'+d.name+'" title="'+d.name+'">';}).join('');
+  pick.addEventListener('click',function(e){
+    var i=e.target.closest('img'); if(!i) return;
+    var d=DOGS.filter(function(x){return x.name===i.getAttribute('data-dog');})[0];
+    if(!d||d===DOG) return;
+    DOG=d; try{localStorage.setItem('ckai_dog',d.name);}catch(e){}
+    applyDog(); botSay(DOG.hi);
+  });
+
+  function add(role,t){var d=document.createElement('div');d.className='msg '+(role==='me'?'me':'bot');d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+  function speak(t){
+    dog.classList.add('talk'); setTimeout(function(){dog.classList.remove('talk');}, Math.min(6000,600+t.length*70));
+    if(voiceOn&&'speechSynthesis' in window){try{
+      speechSynthesis.cancel();
+      var u=new SpeechSynthesisUtterance(t.slice(0,300)); u.lang='zh-TW'; u.rate=1.05;
+      var v=(speechSynthesis.getVoices()||[]).filter(function(x){return /zh/i.test(x.lang);})[0]; if(v)u.voice=v;
+      speechSynthesis.speak(u);
+    }catch(e){}}
+  }
+  function botSay(t){var d=add('bot',t);speak(t);return d;}
+
+  function toggle(){
+    open=!open;
+    if(open){ resizeTo(BIG,true).then(function(){ panel.classList.add('open'); if(!greeted){greeted=true;botSay(DOG.hi);} txt.focus(); }); }
+    else { panel.classList.remove('open'); resizeTo(SMALL,false); if('speechSynthesis' in window)speechSynthesis.cancel(); }
+  }
+  dog.addEventListener('click',toggle);
+  $('mini').addEventListener('click',toggle);
+  $('quit').addEventListener('click',function(){ if(TW) TW.getCurrentWindow().close(); });
+  voiceBtn.addEventListener('click',function(){voiceOn=!voiceOn;voiceBtn.textContent=voiceOn?'🔊':'🔇';if(!voiceOn&&'speechSynthesis' in window)speechSynthesis.cancel();});
+
+  function send(t){
+    t=(t||txt.value||'').trim(); if(!t||busy) return;
+    txt.value=''; add('me',t); history.push({role:'user',content:t});
+    busy=true; var w=add('bot','…');
+    fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history.slice(-10),dog:DOG.name})})
+      .then(function(r){return r.json();})
+      .then(function(d){var rp=(d&&d.reply)||'我這邊出了點狀況,稍後再試。';w.textContent=rp;history.push({role:'assistant',content:rp});speak(rp);})
+      .catch(function(){w.textContent='連不上助教,檢查網路後再試一次。';})
+      .then(function(){busy=false;});
+  }
+  $('send').addEventListener('click',function(){send();});
+  txt.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();send();}});
+  $('quick').addEventListener('click',function(e){var b=e.target.closest('button');if(b)send(b.getAttribute('data-q'));});
+
+  applyDog();
+})();
+</script>
+</body>
+</html>
