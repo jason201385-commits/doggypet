@@ -27,6 +27,20 @@
   .me{background:#e8794a;color:#fff;align-self:flex-end}
   #quick{display:flex;gap:5px;padding:0 8px 6px;flex-wrap:wrap}
   #quick button{background:#fff;border:1px solid #e8b27d;color:#b05e2e;border-radius:20px;padding:3px 9px;font-size:11px;cursor:pointer}
+  /* PM 問答的選項鈕(比快速鈕大,好按) */
+  .opts{display:flex;flex-direction:column;gap:4px;margin:2px 0 4px}
+  .opts button{background:#fff;border:1.5px solid #e8b27d;color:#a8521f;border-radius:10px;
+    padding:6px 10px;font-size:12.5px;cursor:pointer;text-align:left;font-family:inherit}
+  .opts button:hover{background:#ffe9d6}
+  /* 組好的指令卡 */
+  .promptcard{background:#fffdf9;border:2px solid #3E9B6C;border-radius:12px;padding:8px;margin:4px 0}
+  .promptcard .t{font-size:11px;color:#2C6E4C;font-weight:700;margin-bottom:4px}
+  .promptcard pre{white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5;
+    max-height:150px;overflow:auto;background:#fff;border:1px solid #dfeee6;border-radius:8px;padding:6px;margin:0}
+  .promptcard .btns{display:flex;gap:5px;margin-top:6px}
+  .promptcard .btns button{flex:1;background:#3E9B6C;color:#fff;border:0;border-radius:8px;
+    padding:6px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit}
+  .promptcard .btns button.g{background:#fff;color:#2C6E4C;border:1.5px solid #AEDCC2}
   #in{display:flex;gap:6px;padding:0 8px 8px}
   #in input{flex:1;border:1.5px solid #e8b27d;border-radius:10px;padding:7px 10px;font-size:13px;outline:none;-webkit-user-select:text;user-select:text}
   #in button{background:#e8794a;color:#fff;border:0;border-radius:10px;padding:0 12px;font-weight:700;cursor:pointer}
@@ -89,6 +103,7 @@
     <div id="tag">花生</div>
   </div>
 </div>
+<script src="pm.js"></script>
 <script>
 (function(){
   var API='https://claude.easyknowai.com/api/chat';
@@ -155,9 +170,66 @@
   $('quit').addEventListener('click',function(){ if(TW) TW.getCurrentWindow().close(); });
   voiceBtn.addEventListener('click',function(){voiceOn=!voiceOn;voiceBtn.textContent=voiceOn?'🔊':'🔇';if(!voiceOn&&'speechSynthesis' in window)speechSynthesis.cancel();});
 
+  // ── L1 交棒式:PM 問答 → 組指令 → 一鍵複製(全本機,零 API)──
+  function askOptions(qObj){
+    var wrap=document.createElement('div'); wrap.className='msg bot';
+    wrap.textContent=qObj.q;
+    var box=document.createElement('div'); box.className='opts';
+    qObj.opts.forEach(function(o){
+      var b=document.createElement('button'); b.textContent=o;
+      b.onclick=function(){
+        box.remove(); add('me',o);
+        var r=window.LubanPM.answer(o);
+        if(!r) return;
+        if(r.done) showPrompt(r.prompt); else askOptions(r.ask);
+      };
+      box.appendChild(b);
+    });
+    log.appendChild(wrap); log.appendChild(box); log.scrollTop=log.scrollHeight;
+    speak(qObj.q);
+  }
+
+  function showPrompt(text){
+    var card=document.createElement('div'); card.className='promptcard';
+    var t=document.createElement('div'); t.className='t'; t.textContent='✅ 交代給 Claude 的內容(整段複製)';
+    var pre=document.createElement('pre'); pre.textContent=text;
+    var btns=document.createElement('div'); btns.className='btns';
+    var copy=document.createElement('button'); copy.textContent='複製';
+    copy.onclick=function(){
+      try{ navigator.clipboard.writeText(text); }catch(e){
+        var ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta);
+        ta.select(); try{document.execCommand('copy');}catch(e2){} ta.remove();
+      }
+      copy.textContent='已複製 ✓';
+      setTimeout(function(){copy.textContent='複製';},1800);
+    };
+    var how=document.createElement('button'); how.className='g'; how.textContent='教我貼上';
+    how.onclick=function(){
+      botSay(['汪~三步就好:','1. 打開 Claude,點上面的「Code」','2. 點最下面那個打字的框','3. 按 Ctrl+V 貼上,再按 Enter','它就會開始做了。做完回來跟我說結果~'].join(String.fromCharCode(10)));
+    };
+    btns.appendChild(copy); btns.appendChild(how);
+    card.appendChild(t); card.appendChild(pre); card.appendChild(btns);
+    log.appendChild(card); log.scrollTop=log.scrollHeight;
+    speak('好了!按複製,再貼到 Claude 就可以了。');
+  }
+
   function send(t){
     t=(t||txt.value||'').trim(); if(!t||busy) return;
     txt.value=''; add('me',t); history.push({role:'user',content:t});
+
+    // PM 問答進行中 → 打字也算回答,不打 API
+    if(window.LubanPM && window.LubanPM.active()){
+      var r=window.LubanPM.answer(t);
+      if(r){ if(r.done) showPrompt(r.prompt); else askOptions(r.ask); return; }
+    }
+    // 判讀樣態:「想做一件事」就進 PM 流程(零 API);其他照舊問狗狗
+    if(window.LubanPM){
+      var kind=window.LubanPM.readIntent(t);
+      if((kind==='build'||kind==='explore') && t.length>=6){
+        var st=window.LubanPM.start(t);
+        botSay(st.say); askOptions(st.ask); return;
+      }
+    }
     busy=true; var w=add('bot','…');
     fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:history.slice(-10),dog:DOG.name})})
       .then(function(r){return r.json();})
