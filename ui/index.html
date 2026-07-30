@@ -29,7 +29,18 @@
   #quick button{background:#fff;border:1px solid #e8b27d;color:#b05e2e;border-radius:20px;padding:3px 9px;font-size:11px;cursor:pointer}
   #in{display:flex;gap:6px;padding:0 8px 8px}
   #in input{flex:1;border:1.5px solid #e8b27d;border-radius:10px;padding:7px 10px;font-size:13px;outline:none;-webkit-user-select:text;user-select:text}
-  #in button{background:#e8794a;color:#fff;border:0;border-radius:10px;padding:0 14px;font-weight:700;cursor:pointer}
+  #in button{background:#e8794a;color:#fff;border:0;border-radius:10px;padding:0 12px;font-weight:700;cursor:pointer}
+  #mic{background:#fff;border:1.5px solid #e8b27d;color:#b05e2e;border-radius:10px;padding:0 10px;font-size:15px}
+  #mic.rec{background:#e0584a;border-color:#e0584a;color:#fff;animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}
+  /* 右鍵選單:隨時調整位置與大小 */
+  #menu{display:none;position:fixed;right:8px;bottom:8px;z-index:99;background:#fff;border:1.5px solid #e8b27d;
+        border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.3);padding:5px;min-width:132px}
+  #menu.open{display:block}
+  #menu button{display:block;width:100%;text-align:left;background:none;border:0;padding:6px 10px;
+        font-size:12px;color:#5a4636;cursor:pointer;border-radius:7px}
+  #menu button:hover{background:#ffe9d6}
+  #menu hr{border:0;border-top:1px solid #f0cfa8;margin:4px 2px}
 
   /* 狗本體 */
   #dogWrap{display:flex;flex-direction:column;align-items:center;gap:2px;padding-bottom:4px}
@@ -53,11 +64,25 @@
     <div id="pick"></div>
     <div id="log"></div>
     <div id="quick">
-      <button data-q="我卡住了,不知道下一步">我卡住了</button>
-      <button data-q="幫我把想做的事翻成給 Claude 的中文指令">幫我寫指令</button>
-      <button data-q="額度好像快爆了,怎麼辦?">額度快爆了</button>
+      <button data-q="我現在卡住了,不知道下一步。請用編號步驟告訴我現在該做什麼,一次一步。">我卡住了</button>
+      <button data-q="幫我把想做的事翻成可以直接貼給 Claude 的中文指令">幫我寫指令</button>
+      <button data-q="額度好像快爆了,請用編號步驟告訴我現在該怎麼處理">額度快爆了</button>
+      <button data-q="畫面上的英文我看不懂,請告訴我這些常見按鈕的中文意思">看不懂英文</button>
     </div>
-    <div id="in"><input id="txt" placeholder="打你卡住的地方…"><button id="send">送出</button></div>
+    <div id="in"><input id="txt" placeholder="打字,或按 🎤 用講的…"><button id="mic" title="用講的(zh-TW)">🎤</button><button id="send">送出</button></div>
+  </div>
+  <div id="menu">
+    <button data-cmd="corner-br">↘ 貼右下角</button>
+    <button data-cmd="corner-bl">↙ 貼左下角</button>
+    <button data-cmd="corner-tr">↗ 貼右上角</button>
+    <button data-cmd="corner-tl">↖ 貼左上角</button>
+    <hr>
+    <button data-cmd="size-s">縮小一點</button>
+    <button data-cmd="size-m">正常大小</button>
+    <button data-cmd="size-l">放大一點</button>
+    <hr>
+    <button data-cmd="reset">回到預設位置</button>
+    <button data-cmd="quit">關閉狗狗</button>
   </div>
   <div id="dogWrap">
     <img id="dog" alt="狗狗助教">
@@ -80,7 +105,7 @@
   var dog=$('dog'), tag=$('tag'), panel=$('panel'), log=$('log'), txt=$('txt'), hdName=$('hdName'), pick=$('pick'), voiceBtn=$('voice');
 
   // ── Tauri 視窗控制(收合 150x170 / 展開 330x500,錨定左下不飄移)──
-  var TW=null, SMALL={w:150,h:170}, BIG={w:330,h:500};
+  var TW=null, SMALL={w:190,h:210}, BIG={w:340,h:520};
   try{ TW=window.__TAURI__.window; }catch(e){}
   function resizeTo(sz, grow){
     if(!TW) return Promise.resolve();
@@ -145,6 +170,99 @@
   $('quick').addEventListener('click',function(e){var b=e.target.closest('button');if(b)send(b.getAttribute('data-q'));});
 
   applyDog();
+
+  // ── 位置與大小:記住上次的,隨時可調 ──────────────────────────
+  // 寫死座標會在小螢幕被 Windows 夾到左上角(實測 1536x864 時 x=1600 被夾成 26),
+  // 所以一律依 availWidth/Height 動態算。
+  var PKEY='ckai_pet_pos', SKEY='ckai_pet_scale';
+  var SCALE={s:0.8, m:1, l:1.3};
+  function curScale(){ try{ return parseFloat(localStorage.getItem(SKEY))||1; }catch(e){ return 1; } }
+  function baseSize(){ var k=curScale(); return {w:Math.round(190*k), h:Math.round(210*k)}; }
+  function screenWH(){ return { w: window.screen.availWidth||1280, h: window.screen.availHeight||720 }; }
+
+  function corner(which){
+    if(!TW) return;
+    var sz=baseSize(), sc=screenWH(), m=24;
+    var x = /r$/.test(which) ? sc.w - sz.w - m : m;
+    var y = /^b/.test(which) ? sc.h - sz.h - 48 : m;
+    TW.getCurrentWindow().setPosition(new TW.LogicalPosition(x, y));
+    try{ localStorage.setItem(PKEY, JSON.stringify({x:x, y:y})); }catch(e){}
+  }
+  function applyScale(k){
+    try{ localStorage.setItem(SKEY, String(k)); }catch(e){}
+    SMALL={w:Math.round(190*k), h:Math.round(210*k)};
+    BIG  ={w:Math.round(340*k), h:Math.round(520*k)};
+    if(TW) TW.getCurrentWindow().setSize(new TW.LogicalSize(open?BIG.w:SMALL.w, open?BIG.h:SMALL.h));
+  }
+  // 拖曳結束後把位置記下來(下次開就在原地)
+  function rememberPos(){
+    if(!TW) return;
+    TW.getCurrentWindow().outerPosition().then(function(p){
+      return TW.getCurrentWindow().scaleFactor().then(function(f){
+        try{ localStorage.setItem(PKEY, JSON.stringify({x:Math.round(p.x/f), y:Math.round(p.y/f)})); }catch(e){}
+      });
+    }).catch(function(){});
+  }
+  window.addEventListener('mouseup', function(){ setTimeout(rememberPos, 300); });
+
+  (function place(){
+    if(!TW) return;
+    applyScale(curScale());
+    var saved=null; try{ saved=JSON.parse(localStorage.getItem(PKEY)||'null'); }catch(e){}
+    var sc=screenWH(), sz=baseSize();
+    if(saved && saved.x>=-20 && saved.y>=-20 && saved.x < sc.w-40 && saved.y < sc.h-40){
+      TW.getCurrentWindow().setPosition(new TW.LogicalPosition(saved.x, saved.y));   // 記住的位置
+    } else {
+      corner('br');                                                                  // 第一次:右下角
+    }
+  })();
+
+  // ── 右鍵選單:貼四角 / 縮放 / 重設 / 關閉 ────────────────────
+  var menu=$('menu');
+  document.addEventListener('contextmenu', function(e){ e.preventDefault(); menu.classList.add('open'); });
+  document.addEventListener('click', function(e){ if(!menu.contains(e.target)) menu.classList.remove('open'); });
+  menu.addEventListener('click', function(e){
+    var b=e.target.closest('button'); if(!b) return;
+    var c=b.getAttribute('data-cmd');
+    if(c==='corner-br') corner('br');
+    else if(c==='corner-bl') corner('bl');
+    else if(c==='corner-tr') corner('tr');
+    else if(c==='corner-tl') corner('tl');
+    else if(c==='size-s') applyScale(SCALE.s);
+    else if(c==='size-m') applyScale(SCALE.m);
+    else if(c==='size-l') applyScale(SCALE.l);
+    else if(c==='reset'){ applyScale(1); corner('br'); }
+    else if(c==='quit' && TW) TW.getCurrentWindow().close();
+    menu.classList.remove('open');
+  });
+
+  // ── 語音輸入(瀏覽器內建,zh-TW;不上傳第三方)────────────────
+  var rec=null, recging=false, micBtn=$('mic');
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ micBtn.title='這台電腦的內建語音辨識不可用'; micBtn.style.opacity=.45; }
+  micBtn.addEventListener('click', function(){
+    if(!SR){ botSay('這台電腦沒有內建語音辨識,先用打字的吧。'); return; }
+    if(recging){ try{ rec.stop(); }catch(e){} return; }
+    try{
+      rec = new SR();
+      rec.lang='zh-TW'; rec.interimResults=true; rec.continuous=false;
+      rec.onstart=function(){ recging=true; micBtn.classList.add('rec'); txt.placeholder='聽你說…(再按一次結束)'; };
+      rec.onresult=function(ev){
+        var t='';
+        for(var i=0;i<ev.results.length;i++) t += ev.results[i][0].transcript;
+        txt.value=t;
+      };
+      rec.onerror=function(ev){
+        micBtn.classList.remove('rec'); recging=false; txt.placeholder='打字,或按 🎤 用講的…';
+        botSay(ev.error==='not-allowed' ? '麥克風被擋住了,請在系統設定允許麥克風。' : '語音辨識出了點狀況,先用打字的。');
+      };
+      rec.onend=function(){
+        micBtn.classList.remove('rec'); recging=false; txt.placeholder='打字,或按 🎤 用講的…';
+        if(txt.value.trim()) send();   // 講完自動送出
+      };
+      rec.start();
+    }catch(e){ botSay('叫不動語音辨識,先用打字的。'); }
+  });
 })();
 </script>
 </body>
